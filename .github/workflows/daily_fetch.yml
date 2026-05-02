@@ -1,0 +1,39 @@
+name: AI Finance Daily News Fetch
+
+on:
+  schedule:
+    # Runs every weekday at 7:30am ET (11:30 UTC)
+    - cron: '30 11 * * 1-5'
+  workflow_dispatch:  # allows manual trigger from GitHub UI
+
+jobs:
+  fetch-news:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install feedparser requests python-dotenv anthropic
+
+      - name: Run news fetcher
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NOTION_TOKEN:       ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        run: python fetch_news.py
+
+      # Persist the .seen_ids.json cache between runs
+      - name: Commit seen IDs cache
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .seen_ids.json || true
+          git diff --staged --quiet || git commit -m "chore: update seen IDs cache [skip ci]"
+          git push || true

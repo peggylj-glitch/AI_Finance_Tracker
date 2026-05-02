@@ -1,0 +1,6 @@
+.env
+.seen_ids.json
+.DS_Store
+.claude/
+__pycache__/
+*.pyc
