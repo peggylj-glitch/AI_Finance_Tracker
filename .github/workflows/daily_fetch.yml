@@ -1,9 +1,9 @@
-name: AI Finance Daily News Fetch
+name: AI Finance Weekly News Fetch
 
 on:
   schedule:
-    # Runs every weekday at 7:30am ET (11:30 UTC)
-    - cron: '30 11 * * 1-5'
+    # Runs every Monday at 7:30am ET (11:30 UTC)
+    - cron: '30 11 * * 1'
   workflow_dispatch:  # allows manual trigger from GitHub UI
 
 jobs:
