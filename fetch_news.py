@@ -66,17 +66,31 @@ def detect_relevance(text):
             return level
     return "📌 FYI"
 
-def is_finance_ai_related(text):
-    text_lower = text.lower()
+STRICT_FINANCE_TERMS = [
+    "finance","fintech","banking","cfo","fp&a","financial","accounting",
+    "treasury","payment","lending","credit","investment","revenue","budget",
+]
+
+def is_finance_ai_related(title, summary):
+    combined   = (title + " " + summary).lower()
+    title_lower = title.lower()
     ai_terms = [r"\bai\b", r"\bllm\b", r"\bgpt\b", "artificial intelligence", "machine learning",
                 "generative ai", "copilot", "chatgpt"]
-    finance_terms = ["finance","fintech","banking","cfo","fp&a","financial","accounting","treasury","investment","payment","lending","credit","workday","erp","enterprise software","saas","oracle","sap"]
-    exclude_terms = ["military","warfare","iran","israel","ukraine","russia","congress","senate","election","celebrity","sports","nfl","nba","hormuz","blockade"]
-    if any(ex in text_lower for ex in exclude_terms):
+    exclude_terms = [
+        "military","warfare","iran","israel","ukraine","russia","congress","senate",
+        "election","celebrity","sports","nfl","nba","hormuz","blockade",
+        "starting a business","solopreneur","side hustle","job interview",
+        "career advice","hiring tips","resume","dating","lifestyle",
+    ]
+    if any(ex in combined for ex in exclude_terms):
         return False
-    has_ai = any(re.search(t, text_lower) for t in ai_terms)
-    has_finance = any(t in text_lower for t in finance_terms)
-    return has_ai and has_finance
+    has_ai = any(re.search(t, combined) for t in ai_terms)
+    if not has_ai:
+        return False
+    # Title must carry at least one finance term, OR the body has ≥2 distinct ones
+    title_finance = sum(1 for t in STRICT_FINANCE_TERMS if t in title_lower)
+    body_finance  = sum(1 for t in STRICT_FINANCE_TERMS if t in combined)
+    return title_finance >= 1 or body_finance >= 2
 
 def fetch_articles(seen_ids):
     articles = []
@@ -90,7 +104,7 @@ def fetch_articles(seen_ids):
                 if uid in seen_ids: continue
                 title   = strip_html(entry.get("title", ""))
                 summary = strip_html(entry.get("summary", entry.get("description", "")))
-                if not is_finance_ai_related(f"{title} {summary}"): continue
+                if not is_finance_ai_related(title, summary): continue
                 pub = entry.get("published_parsed") or entry.get("updated_parsed")
                 date_str = datetime(*pub[:6], tzinfo=timezone.utc).strftime("%Y-%m-%d") if pub else datetime.now().strftime("%Y-%m-%d")
                 articles.append({"id":uid,"title":title,"summary":summary[:500],"url":url,"source":feed_config["source"],"tier":feed_config["tier"],"date":date_str,"topics":detect_topics(f"{title} {summary}"),"relevance":detect_relevance(f"{title} {summary}")})
@@ -98,19 +112,37 @@ def fetch_articles(seen_ids):
             print(f"  ⚠️  Failed {feed_config['source']}: {e}")
     priority = {"🔥 High":0,"👀 Worth Reading":1,"📌 FYI":2}
     articles.sort(key=lambda a: priority[a["relevance"]])
-    return articles[:MAX_ARTICLES]
+    # Keep at most 1 article per source (best relevance already at top after sort)
+    seen_sources = set()
+    deduped = []
+    for a in articles:
+        if a["source"] not in seen_sources:
+            deduped.append(a)
+            seen_sources.add(a["source"])
+    return deduped[:MAX_ARTICLES]
 
 def ai_summarize(articles):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     for article in articles:
         try:
-            prompt = f"""Summarize this AI/fintech news article in 3-4 sentences of plain prose. No headers, no bold labels, no bullet points, no markdown formatting.
+            has_excerpt = len(article["summary"]) > 80
+            excerpt_block = (
+                f"Raw excerpt: {article['summary']}"
+                if has_excerpt
+                else "(No article excerpt available — headline only.)"
+            )
+            body_instruction = (
+                "Cover what happened (name the company, tool, or person) and why it matters to finance teams. Stick to the facts — no speculation or forward-looking interpretation."
+                if has_excerpt
+                else "Based on the headline and your knowledge of this topic, write what likely happened and why it matters to finance teams. Stick to the facts — no speculation. Do not say you lack an excerpt — just write the summary."
+            )
+            prompt = f"""Summarize this AI/fintech news article for a senior FP&A leader in 3-4 sentences of plain prose. No headers, no bullet points, no markdown formatting.
 
 Article title: {article['title']}
 Source: {article['source']}
-Raw excerpt: {article['summary']}
+{excerpt_block}
 
-Write flowing sentences that cover what happened (name the company, tool, or person), why it matters to finance teams, and one practical implication. Factual and concise."""
+{body_instruction} Factual and concise."""
             msg = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=350, messages=[{"role":"user","content":prompt}])
             article["summary"] = msg.content[0].text.strip()
         except Exception as e:
