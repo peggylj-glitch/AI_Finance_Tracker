@@ -1,5 +1,4 @@
 .env
-.seen_ids.json
 .DS_Store
 .claude/
 __pycache__/
