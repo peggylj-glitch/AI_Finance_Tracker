@@ -20,7 +20,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install feedparser requests python-dotenv anthropic
+        run: pip install feedparser requests python-dotenv anthropic youtube-transcript-api
 
       - name: Run news fetcher
         env:

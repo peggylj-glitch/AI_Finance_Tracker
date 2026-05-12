@@ -3,6 +3,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
 import anthropic
+try:
+    from youtube_transcript_api import YouTubeTranscriptApi
+    YT_AVAILABLE = True
+except ImportError:
+    YT_AVAILABLE = False
 
 load_dotenv(Path(__file__).parent / ".env", override=True)
 
@@ -24,6 +29,14 @@ FEEDS = [
     {"url": "https://www.axios.com/feeds/feed.rss",                          "source": "Axios",           "tier": "🏆 Top"},
     {"url": "https://news.sap.com/feed/",                                    "source": "SAP News",        "tier": "🏆 Top"},
     {"url": "https://news.crunchbase.com/feed/",                             "source": "Crunchbase News", "tier": "⭐ Mid"},
+]
+
+YOUTUBE_CHANNELS = [
+    {"channel_id": "UCcefcZRL2oaA_uBNeo5UOWg", "source": "Y Combinator",   "tier": "🏆 Top"},
+    {"channel_id": "UC9cn0TuPq4dnbTY-CBsm8XA",  "source": "a16z",           "tier": "🏆 Top"},
+    {"channel_id": "UCWrF0oN6unbXrWsTN7RctTw",  "source": "Sequoia Capital", "tier": "🏆 Top"},
+    {"channel_id": "UCESLZhusAkFfsNsApnjF_Cg",  "source": "All-In Podcast", "tier": "🏆 Top"},
+    {"channel_id": "UC-DRzaGnL_vtBUpCFH5M0tg",  "source": "TBPN",           "tier": "🏆 Top"},
 ]
 
 TOPIC_KEYWORDS = {
@@ -92,7 +105,16 @@ def is_finance_ai_related(title, summary):
     body_finance  = sum(1 for t in STRICT_FINANCE_TERMS if t in combined)
     return title_finance >= 1 or body_finance >= 2
 
-def fetch_articles(seen_ids):
+def get_youtube_transcript(video_id, max_chars=3000):
+    if not YT_AVAILABLE:
+        return ""
+    try:
+        segments = YouTubeTranscriptApi.get_transcript(video_id)
+        return " ".join(s["text"] for s in segments)[:max_chars]
+    except Exception:
+        return ""
+
+def fetch_rss_articles(seen_ids):
     articles = []
     for feed_config in FEEDS:
         try:
@@ -107,12 +129,40 @@ def fetch_articles(seen_ids):
                 if not is_finance_ai_related(title, summary): continue
                 pub = entry.get("published_parsed") or entry.get("updated_parsed")
                 date_str = datetime(*pub[:6], tzinfo=timezone.utc).strftime("%Y-%m-%d") if pub else datetime.now().strftime("%Y-%m-%d")
-                articles.append({"id":uid,"title":title,"summary":summary[:500],"url":url,"source":feed_config["source"],"tier":feed_config["tier"],"date":date_str,"topics":detect_topics(f"{title} {summary}"),"relevance":detect_relevance(f"{title} {summary}")})
+                articles.append({"id":uid,"title":title,"summary":summary[:500],"url":url,"source":feed_config["source"],"tier":feed_config["tier"],"date":date_str,"topics":detect_topics(f"{title} {summary}"),"relevance":detect_relevance(f"{title} {summary}"),"type":"article"})
         except Exception as e:
             print(f"  ⚠️  Failed {feed_config['source']}: {e}")
+    return articles
+
+def fetch_youtube_articles(seen_ids):
+    articles = []
+    for ch in YOUTUBE_CHANNELS:
+        try:
+            feed_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={ch['channel_id']}"
+            feed = feedparser.parse(feed_url)
+            for entry in feed.entries[:5]:
+                url = entry.get("link", "")
+                if not url: continue
+                uid = article_id(url)
+                if uid in seen_ids: continue
+                title = strip_html(entry.get("title", ""))
+                video_id = url.split("v=")[-1].split("&")[0]
+                transcript = get_youtube_transcript(video_id)
+                description = strip_html(entry.get("summary", ""))
+                content = transcript or description
+                if not is_finance_ai_related(title, content): continue
+                pub = entry.get("published_parsed") or entry.get("updated_parsed")
+                date_str = datetime(*pub[:6], tzinfo=timezone.utc).strftime("%Y-%m-%d") if pub else datetime.now().strftime("%Y-%m-%d")
+                articles.append({"id":uid,"title":title,"summary":content[:2000],"url":url,"source":ch["source"],"tier":ch["tier"],"date":date_str,"topics":detect_topics(f"{title} {content}"),"relevance":detect_relevance(f"{title} {content}"),"type":"video"})
+        except Exception as e:
+            print(f"  ⚠️  Failed {ch['source']}: {e}")
+    return articles
+
+def fetch_articles(seen_ids):
+    articles = fetch_rss_articles(seen_ids) + fetch_youtube_articles(seen_ids)
     priority = {"🔥 High":0,"👀 Worth Reading":1,"📌 FYI":2}
     articles.sort(key=lambda a: priority[a["relevance"]])
-    # Keep at most 1 article per source (best relevance already at top after sort)
+    # Keep at most 1 item per source (best relevance already at top after sort)
     seen_sources = set()
     deduped = []
     for a in articles:
@@ -126,15 +176,17 @@ def ai_summarize(articles):
     for article in articles:
         try:
             if len(article["summary"]) <= 80:
-                # Not enough content to summarize — leave as-is and skip API call
                 continue
-            prompt = f"""Write a 2-3 sentence factual summary of this news article for a senior FP&A leader. Plain prose only — no headers, bullets, or markdown.
+            is_video = article.get("type") == "video"
+            content_label = "Transcript excerpt" if is_video else "Excerpt"
+            source_type = "video/podcast episode" if is_video else "article"
+            prompt = f"""Write a 2-3 sentence factual summary of this {source_type} for a senior FP&A leader. Plain prose only — no headers, bullets, or markdown.
 
 Title: {article['title']}
 Source: {article['source']}
-Excerpt: {article['summary']}
+{content_label}: {article['summary']}
 
-State what happened and who is involved, and why it is relevant to finance teams. Stick to the facts."""
+State what was discussed and who is involved, and why it is relevant to finance teams or fintech builders. Stick to the facts."""
             msg = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=350, messages=[{"role":"user","content":prompt}])
             article["summary"] = msg.content[0].text.strip()
         except Exception as e:
@@ -147,7 +199,8 @@ def push_daily_digest(articles):
     date_iso = datetime.now().strftime("%Y-%m-%d")
     blocks = []
     for a in articles:
-        meta = f"{a['relevance']}  ·  {a['source']} {a['tier']}  ·  {', '.join(a['topics'])}"
+        type_badge = "📹 " if a.get("type") == "video" else ""
+        meta = f"{a['relevance']}  ·  {type_badge}{a['source']} {a['tier']}  ·  {', '.join(a['topics'])}"
         blocks += [
             {"object":"block","type":"heading_3","heading_3":{"rich_text":[{"type":"text","text":{"content":a["title"][:200],"link":{"url":a["url"]}}}]}},
             {"object":"block","type":"paragraph","paragraph":{"rich_text":[{"type":"text","text":{"content":meta},"annotations":{"italic":True,"color":"gray"}}]}},
@@ -178,7 +231,7 @@ def main():
     print("─" * 60)
     seen_ids = load_seen_ids()
     print(f"📋 Known articles: {len(seen_ids)}")
-    print("\n📡 Fetching from RSS feeds...")
+    print("\n📡 Fetching from RSS feeds and YouTube...")
     articles = fetch_articles(seen_ids)
     print(f"   Found {len(articles)} new relevant articles")
     if not articles:
