@@ -186,7 +186,7 @@ Title: {article['title']}
 Source: {article['source']}
 {content_label}: {article['summary']}
 
-State what was discussed and who is involved, and why it is relevant to finance teams or fintech builders. Stick to the facts."""
+State what was discussed and who is involved. Stick to the facts — no interpretation, no "this is relevant because" framing."""
             msg = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=350, messages=[{"role":"user","content":prompt}])
             article["summary"] = msg.content[0].text.strip()
         except Exception as e:
