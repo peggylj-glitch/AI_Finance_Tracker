@@ -94,16 +94,18 @@ def is_finance_ai_related(title, summary):
         "election","celebrity","sports","nfl","nba","hormuz","blockade",
         "starting a business","solopreneur","side hustle","job interview",
         "career advice","hiring tips","resume","dating","lifestyle",
+        "media company","digital publisher","buzzfeed","controlling stake",
+        "box office","streaming deal","record label","entertainment deal",
     ]
     if any(ex in combined for ex in exclude_terms):
         return False
     has_ai = any(re.search(t, combined) for t in ai_terms)
     if not has_ai:
         return False
-    # Title must carry at least one finance term, OR the body has ≥2 distinct ones
+    # Title must carry at least one finance term, OR the body has ≥3 distinct ones
     title_finance = sum(1 for t in STRICT_FINANCE_TERMS if t in title_lower)
     body_finance  = sum(1 for t in STRICT_FINANCE_TERMS if t in combined)
-    return title_finance >= 1 or body_finance >= 2
+    return title_finance >= 1 or body_finance >= 3
 
 def get_youtube_transcript(video_id, max_chars=3000):
     if not YT_AVAILABLE:
