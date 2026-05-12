@@ -125,24 +125,16 @@ def ai_summarize(articles):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     for article in articles:
         try:
-            has_excerpt = len(article["summary"]) > 80
-            excerpt_block = (
-                f"Raw excerpt: {article['summary']}"
-                if has_excerpt
-                else "(No article excerpt available — headline only.)"
-            )
-            body_instruction = (
-                "Cover what happened (name the company, tool, or person) and why it matters to finance teams. Stick to the facts — no speculation or forward-looking interpretation."
-                if has_excerpt
-                else "Based on the headline and your knowledge of this topic, write what likely happened and why it matters to finance teams. Stick to the facts — no speculation. Do not say you lack an excerpt — just write the summary."
-            )
-            prompt = f"""Summarize this AI/fintech news article for a senior FP&A leader in 3-4 sentences of plain prose. No headers, no bullet points, no markdown formatting.
+            if len(article["summary"]) <= 80:
+                # Not enough content to summarize — leave as-is and skip API call
+                continue
+            prompt = f"""Write a 2-3 sentence factual summary of this news article for a senior FP&A leader. Plain prose only — no headers, bullets, or markdown.
 
-Article title: {article['title']}
+Title: {article['title']}
 Source: {article['source']}
-{excerpt_block}
+Excerpt: {article['summary']}
 
-{body_instruction} Factual and concise."""
+State what happened and who is involved, and why it is relevant to finance teams. Stick to the facts."""
             msg = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=350, messages=[{"role":"user","content":prompt}])
             article["summary"] = msg.content[0].text.strip()
         except Exception as e:
